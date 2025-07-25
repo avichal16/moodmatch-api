@@ -1,6 +1,16 @@
 import OpenAI from "openai";
 
 export default async function handler(req, res) {
+  // Add CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   const { moodText, tags } = req.query;
 
   if (!process.env.OPENAI_API_KEY) {
@@ -13,34 +23,26 @@ export default async function handler(req, res) {
 
   try {
     const prompt = `
-      Based on the following mood and descriptive tags:
+      Suggest 6 popular movies and 6 books based on:
       Mood: "${moodText}"
       Tags: "${tags}"
-
-      Suggest 6 popular, widely recognized movies and 6 books that match this mood and these tags.
-      Prioritize titles that are known and generally well-rated, but match the emotional tone.
-      Return only valid JSON, with no explanations, in this format:
-      {
-        "movies": ["Movie Title 1","Movie Title 2",...],
-        "books": ["Book Title 1","Book Title 2",...]
-      }
+      
+      Return ONLY valid JSON in this format:
+      {"movies":["Movie1",...],"books":["Book1",...]} 
+      Do not add explanations, extra text, or markdown.
     `;
 
     const response = await client.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.5,
+      temperature: 0.4,
     });
 
-    const text = response.choices[0].message.content.trim();
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      console.error("Invalid JSON from ChatGPT:", text);
-      return res.status(500).json({ error: "Invalid AI response", raw: text });
-    }
+    let text = response.choices[0].message.content.trim();
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error("No JSON found in AI response");
+    const json = match[0];
+    const data = JSON.parse(json);
 
     res.status(200).json(data);
   } catch (error) {
