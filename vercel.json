@@ -5,9 +5,6 @@
       "runtime": "nodejs18.x"
     }
   },
-  "builds": [
-    { "src": "api/mood.js", "use": "@vercel/node" }
-  ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
