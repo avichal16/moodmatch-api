@@ -13,27 +13,40 @@ export default async function handler(req, res) {
 
   try {
     const prompt = `
-      Analyze the following description and combine it with these optional tags: ${tags || "None"}.
-      Extract 3-5 mood tags and 1-2 genres (Drama, Action, Comedy, etc.) most relevant for recommendations.
-      Return only valid JSON in this format: {"tags":["tag1","tag2"],"genres":["genre1","genre2"]}
+      Based on the following mood and descriptive tags:
+      Mood: "${moodText}"
+      Tags: "${tags}"
 
-      Mood description: "${moodText}"
+      Suggest 6 popular, widely recognized movies and 6 books that match this mood and these tags.
+      Prioritize titles that are known and generally well-rated, but match the emotional tone.
+      Return only valid JSON, with no explanations, in this format:
+      {
+        "movies": ["Movie Title 1","Movie Title 2",...],
+        "books": ["Book Title 1","Book Title 2",...]
+      }
     `;
 
     const response = await client.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
+      temperature: 0.5,
     });
 
     const text = response.choices[0].message.content.trim();
-    const data = JSON.parse(text);
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (err) {
+      console.error("Invalid JSON from ChatGPT:", text);
+      return res.status(500).json({ error: "Invalid AI response", raw: text });
+    }
 
     res.status(200).json(data);
   } catch (error) {
     console.error("OpenAI API Error:", error);
     res.status(500).json({ 
-      error: "Failed to analyze mood", 
+      error: "Failed to generate recommendations", 
       details: error.message 
     });
   }
