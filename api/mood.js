@@ -8,14 +8,13 @@ const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 export default async function handler(req, res) {
-  // --- CORS must be set FIRST ---
+  // --- CORS must come first ---
   res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  
-  // Handle browser preflight requests
+
   if (req.method === "OPTIONS") {
-    return res.status(200).end();
+    return res.status(200).end(); // Preflight response
   }
 
   const { mood, refId, refType } = req.query;
@@ -24,7 +23,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // --- Step 1: Gather reference data for context ---
+    // --- Step 1: Gather reference data (keywords & genres) ---
     let refKeywords = "";
     let refGenres = "";
     let refTitle = "";
@@ -39,7 +38,7 @@ export default async function handler(req, res) {
     const context = `Mood: ${mood}, Reference: ${refTitle}, Keywords: ${refKeywords}, Genres: ${refGenres}`;
     const moodEmbedding = await embedText(context);
 
-    // --- Step 2: Fetch a broad but filtered pool ---
+    // --- Step 2: Fetch candidates (movies, TV, books, playlist) ---
     const [movies, tv, books, spotify] = await Promise.all([
       fetchDiscover("movie", refGenres, refKeywords),
       fetchDiscover("tv", refGenres, refKeywords),
@@ -47,12 +46,12 @@ export default async function handler(req, res) {
       fetchSpotifyPlaylist(`${mood} ${refTitle}`)
     ]);
 
-    // --- Step 3: Embed & rank ---
+    // --- Step 3: Score by mood embedding ---
     const scoredMovies = await scoreItems(movies, moodEmbedding);
     const scoredTV = await scoreItems(tv, moodEmbedding);
     const scoredBooks = await scoreItems(books, moodEmbedding);
 
-    // --- Step 4: Return top recommendations ---
+    // --- Step 4: Return final recommendations ---
     res.status(200).json({
       movies: scoredMovies.sort((a, b) => b.score - a.score).slice(0, 6),
       tv: scoredTV.sort((a, b) => b.score - a.score).slice(0, 6),
@@ -120,12 +119,33 @@ async function fetchReferenceData(id, type) {
 }
 
 async function fetchDiscover(type, genres, keywords) {
-  const page = Math.floor(Math.random() * 10) + 1;
+  // Pick a safe random page (1–5, avoids empty results)
+  let page = Math.floor(Math.random() * 5) + 1;
+
   const genreParam = genres ? `&with_genres=${encodeURIComponent(genres)}` : "";
   const keywordParam = keywords ? `&with_keywords=${encodeURIComponent(keywords)}` : "";
-  const url = `https://api.themoviedb.org/3/discover/${type}?api_key=${TMDB_KEY}&language=en-US&page=${page}${genreParam}${keywordParam}&vote_count.gte=50`;
-  const resp = await fetch(url);
-  const data = await resp.json();
+
+  // First: try strict (genres + keywords)
+  let url = `https://api.themoviedb.org/3/discover/${type}?api_key=${TMDB_KEY}&language=en-US&page=${page}${genreParam}${keywordParam}&vote_count.gte=50`;
+  let resp = await fetch(url);
+  let data = await resp.json();
+
+  // Retry with genres only
+  if (!data.results || data.results.length === 0) {
+    if (genres) {
+      url = `https://api.themoviedb.org/3/discover/${type}?api_key=${TMDB_KEY}&language=en-US&page=1&with_genres=${encodeURIComponent(genres)}&vote_count.gte=50`;
+      resp = await fetch(url);
+      data = await resp.json();
+    }
+  }
+
+  // Fallback to popular (no filters) if still empty
+  if (!data.results || data.results.length === 0) {
+    url = `https://api.themoviedb.org/3/${type}/popular?api_key=${TMDB_KEY}&language=en-US&page=1`;
+    resp = await fetch(url);
+    data = await resp.json();
+  }
+
   return (data.results || []).map(item => ({
     id: item.id,
     title: type === "movie" ? item.title : item.name,
