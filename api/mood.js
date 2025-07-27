@@ -70,7 +70,7 @@ async function fetchReferenceData(id, type) {
 }
 
 async function fetchOpenAIPool(mood, criteria) {
-  const prompt = `Suggest 200 items: movies, TV series, and books for Mood: ${mood}, Style: ${criteria}. Return JSON with title, type (movie|tv|book), description, genre, tags.`;
+  const prompt = `Suggest 20 items: movies, TV series, and books for Mood: ${mood}, Style: ${criteria}. Return JSON with title, type (movie|tv|book), description, genre, tags.`;
   const resp = await client.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.7 });
   try { return JSON.parse(resp.choices[0].message.content); } catch { return []; }
 }
