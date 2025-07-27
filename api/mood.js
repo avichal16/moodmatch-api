@@ -74,10 +74,10 @@ async function fetchOpenAIPool(mood, criteria) {
   Each object must have: title (string), type ("movie"|"tv"|"book"), desc (string), genre (string[]), tags (string[]).`;
   
   const resp = await client.chat.completions.create({
-    model: "gpt-4o",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.7
-  });
+  model: "gpt-4o-mini",  // faster alternative
+  messages: [{ role: "user", content: prompt }],
+  temperature: 0.7
+});
   
   let raw = resp.choices[0]?.message?.content || "[]";
   try {
@@ -92,39 +92,51 @@ async function fetchOpenAIPool(mood, criteria) {
 
 
 async function enrichPoolWithMetadata(pool) {
-  const results = [];
-  for (const item of pool) {
-    if (item.type === 'book') { results.push(item); continue; }
-    const query = encodeURIComponent(item.title);
-    const url = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${query}`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    const match = data.results?.[0];
-    if (match) {
-      results.push({ ...item, id: match.id, image: match.poster_path ? `https://image.tmdb.org/t/p/w200${match.poster_path}` : '' });
+  const results = await Promise.all(pool.map(async (item) => {
+    if (item.type === 'book') return item;
+    try {
+      const query = encodeURIComponent(item.title);
+      const url = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${query}`;
+      const resp = await fetch(url).then(r => r.json());
+      const match = resp.results?.[0];
+      return match
+        ? { ...item, id: match.id, image: match.poster_path ? `https://image.tmdb.org/t/p/w200${match.poster_path}` : '' }
+        : item;
+    } catch {
+      return item;
     }
-  }
+  }));
   return results;
 }
 
-async function embedText(text) {
-  const resp = await client.embeddings.create({ model: "text-embedding-3-small", input: text });
-  return resp.data[0].embedding;
+
+async function embedTexts(texts) {
+  const resp = await client.embeddings.create({
+    model: "text-embedding-3-small",  // cheapest & fastest
+    input: texts
+  });
+  return resp.data.map(r => r.embedding);
 }
 
 async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitle = "") {
-  const results = [];
-  for (const item of items) {
-    const text = `${item.title} ${item.desc || ''} ${item.tags || ''}`;
-    const itemEmbed = await embedText(text);
-    const sim = cosineSimilarity(moodEmbedding, itemEmbed);
+  if (!items.length) return [];
+
+  // Prepare all texts for embedding in one batch
+  const texts = items.map(item => `${item.title} ${item.desc || ''} ${(Array.isArray(item.tags) ? item.tags.join(' ') : item.tags) || ''}`);
+  const embeddings = await embedTexts(texts);
+
+  // Score each item
+  const results = items.map((item, idx) => {
+    const sim = cosineSimilarity(moodEmbedding, embeddings[idx]);
     const keywordScore = keywordOverlap(refKeywords, item.tags || '');
     const genreScore = genreOverlap(refGenres, item.tags || '');
     const score = (0.5 * sim) + (0.3 * keywordScore) + (0.2 * genreScore);
-    results.push({ ...item, score, reason: `Matched mood & ${refTitle || 'context'}` });
-  }
+    return { ...item, score, reason: `Matched mood & ${refTitle || 'context'}` };
+  });
+
   return results;
 }
+
 
 function cosineSimilarity(a,b){const dot=a.reduce((s,ai,i)=>s+ai*b[i],0);const normA=Math.sqrt(a.reduce((s,ai)=>s+ai*ai,0));const normB=Math.sqrt(b.reduce((s,bi)=>s+bi*bi,0));return dot/(normA*normB);} 
 function keywordOverlap(ref, tags) {
