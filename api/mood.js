@@ -70,10 +70,26 @@ async function fetchReferenceData(id, type) {
 }
 
 async function fetchOpenAIPool(mood, criteria) {
-  const prompt = `Suggest 20 items: movies, TV series, and books for Mood: ${mood}, Style: ${criteria}. Return JSON with title, type (movie|tv|book), description, genre, tags.`;
-  const resp = await client.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }], temperature: 0.7 });
-  try { return JSON.parse(resp.choices[0].message.content); } catch { return []; }
+  const prompt = `Return a JSON array (no extra text) of 20 recommendations for Mood: ${mood}, Style: ${criteria}.
+  Each object must have: title (string), type ("movie"|"tv"|"book"), desc (string), genre (string[]), tags (string[]).`;
+  
+  const resp = await client.chat.completions.create({
+    model: "gpt-4o",
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.7
+  });
+  
+  let raw = resp.choices[0]?.message?.content || "[]";
+  try {
+    // Strip Markdown fences if GPT adds ```json
+    raw = raw.replace(/```json|```/g, "");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("GPT parsing failed", raw);
+    return [];
+  }
 }
+
 
 async function enrichPoolWithMetadata(pool) {
   const results = [];
