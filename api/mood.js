@@ -8,19 +8,23 @@ const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 export default async function handler(req, res) {
-  // --- CORS: Only allow your frontend ---
+  // --- CORS must be set FIRST ---
   res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  
+  // Handle browser preflight requests
   if (req.method === "OPTIONS") {
-    return res.status(200).end(); // Preflight check
+    return res.status(200).end();
   }
 
   const { mood, refId, refType } = req.query;
-  if (!mood) return res.status(400).json({ error: "Missing mood input" });
+  if (!mood) {
+    return res.status(400).json({ error: "Missing mood input" });
+  }
 
   try {
-    // Step 1: Build context string
+    // --- Step 1: Gather reference data for context ---
     let refKeywords = "";
     let refGenres = "";
     let refTitle = "";
@@ -35,7 +39,7 @@ export default async function handler(req, res) {
     const context = `Mood: ${mood}, Reference: ${refTitle}, Keywords: ${refKeywords}, Genres: ${refGenres}`;
     const moodEmbedding = await embedText(context);
 
-    // Step 2: Fetch candidates (dynamic pool)
+    // --- Step 2: Fetch a broad but filtered pool ---
     const [movies, tv, books, spotify] = await Promise.all([
       fetchDiscover("movie", refGenres, refKeywords),
       fetchDiscover("tv", refGenres, refKeywords),
@@ -43,21 +47,21 @@ export default async function handler(req, res) {
       fetchSpotifyPlaylist(`${mood} ${refTitle}`)
     ]);
 
-    // Step 3: Score candidates by embeddings
+    // --- Step 3: Embed & rank ---
     const scoredMovies = await scoreItems(movies, moodEmbedding);
     const scoredTV = await scoreItems(tv, moodEmbedding);
     const scoredBooks = await scoreItems(books, moodEmbedding);
 
-    // Step 4: Return top picks
+    // --- Step 4: Return top recommendations ---
     res.status(200).json({
       movies: scoredMovies.sort((a, b) => b.score - a.score).slice(0, 6),
       tv: scoredTV.sort((a, b) => b.score - a.score).slice(0, 6),
       books: scoredBooks.sort((a, b) => b.score - a.score).slice(0, 6),
       spotify: spotify || null
     });
-  } catch (e) {
-    console.error("Mood API Error:", e);
-    res.status(500).json({ error: "Failed to fetch recommendations", details: e.message });
+  } catch (error) {
+    console.error("Mood API Error:", error);
+    res.status(500).json({ error: "Failed to fetch recommendations", details: error.message });
   }
 }
 
