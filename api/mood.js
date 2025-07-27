@@ -14,7 +14,7 @@ export default async function handler(req, res) {
 
   const { query, mood, criteria, refId, refType } = req.query;
 
-  // Handle /api/search
+  // Handle /api/searh
   if (query) {
     try {
       const tmdbMovieUrl = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_KEY}&query=${encodeURIComponent(query)}`;
