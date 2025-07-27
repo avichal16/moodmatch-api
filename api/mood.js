@@ -8,52 +8,59 @@ const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 export default async function handler(req, res) {
-  // --- CORS HEADERS ---
-  res.setHeader("Access-Control-Allow-Origin", "*"); // or restrict to "https://mymoodmatch.com"
+  // CORS
+  res.setHeader("Access-Control-Allow-Origin", "*"); // or "https://mymoodmatch.com"
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") {
-    return res.status(200).end(); // Preflight response
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
 
-  const { mood } = req.query;
-  if (!mood) return res.status(400).json({ error: "Missing mood" });
+  const { mood, refId, refType } = req.query;
+  if (!mood) return res.status(400).json({ error: "Missing mood input" });
 
   try {
-    // Step 1: Embed user mood
-    const moodEmbedding = await embedText(mood);
+    // Step 1: Build context string
+    let refKeywords = "";
+    let refGenres = "";
+    let refTitle = "";
 
-    // Step 2: Fetch candidate content
+    if (refId && refType) {
+      const refData = await fetchReferenceData(refId, refType);
+      refKeywords = refData.keywords.join(", ");
+      refGenres = refData.genres.join(", ");
+      refTitle = refData.title;
+    }
+
+    const context = `Mood: ${mood}, Reference: ${refTitle}, Keywords: ${refKeywords}, Genres: ${refGenres}`;
+    const moodEmbedding = await embedText(context);
+
+    // Step 2: Fetch candidates
     const [movies, tv, books, spotify] = await Promise.all([
-      fetchTMDB("movie"),
-      fetchTMDB("tv"),
-      fetchBooks(),
-      fetchSpotifyPlaylist(mood)
+      fetchDiscover("movie", refGenres, refKeywords),
+      fetchDiscover("tv", refGenres, refKeywords),
+      fetchBooks(refKeywords || refGenres || mood),
+      fetchSpotifyPlaylist(`${mood} ${refTitle}`)
     ]);
 
-    // Step 3: Score by cosine similarity
+    // Step 3: Embed and score
     const scoredMovies = await scoreItems(movies, moodEmbedding);
     const scoredTV = await scoreItems(tv, moodEmbedding);
     const scoredBooks = await scoreItems(books, moodEmbedding);
 
-    // Step 4: Pick top N for each
-    const topMovies = scoredMovies.sort((a,b) => b.score - a.score).slice(0,6);
-    const topTV = scoredTV.sort((a,b) => b.score - a.score).slice(0,6);
-    const topBooks = scoredBooks.sort((a,b) => b.score - a.score).slice(0,6);
-
+    // Step 4: Return top picks
     res.status(200).json({
-      movies: topMovies,
-      tv: topTV,
-      books: topBooks,
+      movies: scoredMovies.sort((a,b)=>b.score-a.score).slice(0,6),
+      tv: scoredTV.sort((a,b)=>b.score-a.score).slice(0,6),
+      books: scoredBooks.sort((a,b)=>b.score-a.score).slice(0,6),
       spotify: spotify || null
     });
   } catch (e) {
     console.error("Mood API Error:", e);
-    res.status(500).json({ error: "Failed to generate recommendations", details: e.message });
+    res.status(500).json({ error: "Failed to fetch recommendations", details: e.message });
   }
 }
 
-// --- Helpers ---
+// ---- Helpers ----
+
 async function embedText(text) {
   const resp = await client.embeddings.create({
     model: "text-embedding-3-small",
@@ -65,10 +72,10 @@ async function embedText(text) {
 async function scoreItems(items, moodEmbedding) {
   const results = [];
   for (const item of items) {
-    const combinedText = `${item.title} ${item.desc || ""} ${item.tags || ""}`;
-    const itemEmbed = await embedText(combinedText);
+    const text = `${item.title} ${item.desc || ""} ${item.tags || ""}`;
+    const itemEmbed = await embedText(text);
     const score = cosineSimilarity(moodEmbedding, itemEmbed);
-    results.push({ ...item, score, reason: `Matched mood by tone, tags, and vibe` });
+    results.push({ ...item, score, reason: `Matched your mood and reference vibe.` });
   }
   return results;
 }
@@ -80,22 +87,53 @@ function cosineSimilarity(a, b) {
   return dot / (normA * normB);
 }
 
-async function fetchTMDB(type) {
-  const url = `https://api.themoviedb.org/3/${type}/popular?api_key=${TMDB_KEY}&language=en-US&page=1`;
+async function fetchReferenceData(id, type) {
+  try {
+    if (type === "book") {
+      const resp = await fetch(`https://www.googleapis.com/books/v1/volumes/${id}`);
+      const data = await resp.json();
+      return {
+        title: data.volumeInfo?.title || "Unknown Book",
+        keywords: (data.volumeInfo?.categories || []),
+        genres: (data.volumeInfo?.categories || [])
+      };
+    } else {
+      const details = await fetch(`https://api.themoviedb.org/3/${type}/${id}?api_key=${TMDB_KEY}&language=en-US`);
+      const detData = await details.json();
+      const keywordsResp = await fetch(`https://api.themoviedb.org/3/${type}/${id}/keywords?api_key=${TMDB_KEY}`);
+      const keyData = await keywordsResp.json();
+      return {
+        title: detData.title || detData.name || "Unknown",
+        keywords: (keyData.keywords || []).map(k => k.name),
+        genres: (detData.genres || []).map(g => g.name)
+      };
+    }
+  } catch {
+    return { title: "Unknown", keywords: [], genres: [] };
+  }
+}
+
+async function fetchDiscover(type, genres, keywords) {
+  const page = Math.floor(Math.random()*10)+1;
+  const genreParam = genres ? `&with_genres=${encodeURIComponent(genres)}` : "";
+  const keywordParam = keywords ? `&with_keywords=${encodeURIComponent(keywords)}` : "";
+  const url = `https://api.themoviedb.org/3/discover/${type}?api_key=${TMDB_KEY}&language=en-US&page=${page}${genreParam}${keywordParam}&vote_count.gte=50`;
   const resp = await fetch(url);
   const data = await resp.json();
-  return (data.results || []).slice(0, 20).map(item => ({
+  return (data.results || []).map(item => ({
     id: item.id,
-    title: type === "movie" ? item.title : item.name,
+    title: type==="movie" ? item.title : item.name,
     type,
     image: item.poster_path ? `https://image.tmdb.org/t/p/w200${item.poster_path}` : "",
     desc: item.overview || "",
-    tags: item.genre_ids?.join(", ")
+    tags: (item.genre_ids || []).join(", ")
   }));
 }
 
-async function fetchBooks() {
-  const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=subject:fiction&maxResults=20`);
+async function fetchBooks(query) {
+  const q = encodeURIComponent(query || "fiction");
+  const start = Math.floor(Math.random()*5)*20;
+  const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=20&startIndex=${start}`);
   const data = await resp.json();
   return (data.items || []).map(b => ({
     id: b.id,
@@ -107,11 +145,11 @@ async function fetchBooks() {
   }));
 }
 
-async function fetchSpotifyPlaylist(mood) {
+async function fetchSpotifyPlaylist(query) {
   try {
     const tokenResp = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
-      headers: { 
+      headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "Authorization": `Basic ${Buffer.from(`${SPOTIFY_ID}:${SPOTIFY_SECRET}`).toString("base64")}`
       },
@@ -119,12 +157,14 @@ async function fetchSpotifyPlaylist(mood) {
     });
     const { access_token } = await tokenResp.json();
 
-    const searchResp = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(mood)}&type=playlist&limit=1`, {
+    const searchResp = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`, {
       headers: { "Authorization": `Bearer ${access_token}` }
     });
     const searchData = await searchResp.json();
-    const playlist = searchData.playlists?.items?.[0];
-    return playlist ? `https://open.spotify.com/embed/playlist/${playlist.id}` : null;
+    const playlists = searchData.playlists?.items || [];
+    if (!playlists.length) return null;
+    const pick = playlists[Math.floor(Math.random()*playlists.length)];
+    return `https://open.spotify.com/embed/playlist/${pick.id}`;
   } catch (e) {
     console.error("Spotify fetch failed:", e);
     return null;
