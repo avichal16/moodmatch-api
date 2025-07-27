@@ -127,8 +127,20 @@ async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitl
 }
 
 function cosineSimilarity(a,b){const dot=a.reduce((s,ai,i)=>s+ai*b[i],0);const normA=Math.sqrt(a.reduce((s,ai)=>s+ai*ai,0));const normB=Math.sqrt(b.reduce((s,bi)=>s+bi*bi,0));return dot/(normA*normB);} 
-function keywordOverlap(ref,tags){if(!ref.length||!tags)return 0;const t=tags.toLowerCase().split(/[\s,]+/);return ref.filter(k=>t.includes(k.toLowerCase())).length/(ref.length||1);} 
-function genreOverlap(ref,tags){if(!ref.length||!tags)return 0;const t=tags.toLowerCase().split(/[\s,]+/);return ref.filter(g=>t.includes(g.toLowerCase())).length/(ref.length||1);} 
+function keywordOverlap(ref, tags) {
+  if (!ref.length || !tags) return 0;
+  const tagString = Array.isArray(tags) ? tags.join(" ") : tags;
+  const t = tagString.toLowerCase().split(/[\s,]+/);
+  return ref.filter(k => t.includes(k.toLowerCase())).length / (ref.length || 1);
+}
+
+function genreOverlap(ref, tags) {
+  if (!ref.length || !tags) return 0;
+  const tagString = Array.isArray(tags) ? tags.join(" ") : tags;
+  const t = tagString.toLowerCase().split(/[\s,]+/);
+  return ref.filter(g => t.includes(g.toLowerCase())).length / (ref.length || 1);
+}
+
 function finalizeResults(items){items.sort((a,b)=>b.score-a.score);return shuffleArray(items.slice(0,12)).slice(0,6);} 
 function shuffleArray(arr){return arr.sort(()=>Math.random()-0.5);} 
 
