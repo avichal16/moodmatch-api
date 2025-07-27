@@ -15,7 +15,13 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const { mood, refId, refType } = req.query;
+  // Allow both GET and POST, support moodText fallback
+  const query = req.query || {};
+  const body = req.body || {};
+  const mood = query.mood || query.moodText || body.mood || body.moodText;
+  const refId = query.refId || body.refId;
+  const refType = query.refType || body.refType;
+
   if (!mood) return res.status(400).json({ error: "Missing mood input" });
 
   try {
@@ -27,16 +33,16 @@ export default async function handler(req, res) {
 
     if (refId && refType) {
       const refData = await fetchReferenceData(refId, refType);
-      refKeywords = refData.keywords;
-      refGenres = refData.genres;
-      refTitle = refData.title;
+      refKeywords = refData.keywords || [];
+      refGenres = refData.genres || [];
+      refTitle = refData.title || "";
       refOverview = refData.overview || "";
     }
 
-    // Build a strong context string
+    // Build a strong context string for embeddings
     const context = `Mood Context:
     Mood: ${mood}
-    Reference Title: ${refTitle}
+    Reference Title: ${refTitle || ""}
     Overview: ${refOverview}
     Keywords: ${refKeywords.join(", ")}
     Genres: ${refGenres.join(", ")}`;
@@ -48,15 +54,15 @@ export default async function handler(req, res) {
       fetchExpandedPool("movie", refGenres, refKeywords),
       fetchExpandedPool("tv", refGenres, refKeywords),
       fetchBooks(refKeywords.join(" ") || refGenres.join(" ") || mood),
-      fetchSpotifyPlaylist(`${mood} ${refTitle}`)
+      fetchSpotifyPlaylist(`${mood} ${refTitle || ""}`)
     ]);
 
     // Step 3: Score with hybrid method
-    const scoredMovies = await hybridScore(moviesPool, moodEmbedding, refKeywords, refGenres);
-    const scoredTV = await hybridScore(tvPool, moodEmbedding, refKeywords, refGenres);
-    const scoredBooks = await hybridScore(booksPool, moodEmbedding, refKeywords, refGenres);
+    const scoredMovies = await hybridScore(moviesPool, moodEmbedding, refKeywords, refGenres, refTitle);
+    const scoredTV = await hybridScore(tvPool, moodEmbedding, refKeywords, refGenres, refTitle);
+    const scoredBooks = await hybridScore(booksPool, moodEmbedding, refKeywords, refGenres, refTitle);
 
-    // Step 4: Sort, shuffle near ties, return top 6 each
+    // Step 4: Sort, shuffle, and return top 6 each
     res.status(200).json({
       movies: finalizeResults(scoredMovies),
       tv: finalizeResults(scoredTV),
@@ -80,7 +86,7 @@ async function embedText(text) {
   return resp.data[0].embedding;
 }
 
-async function hybridScore(items, moodEmbedding, refKeywords, refGenres) {
+async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitle = "") {
   const results = [];
   for (const item of items) {
     const text = `${item.title} ${item.desc || ""} ${item.tags || ""}`;
@@ -115,10 +121,10 @@ function genreOverlap(refGenres, tags) {
   return matches.length / (refGenres.length || 1);
 }
 
-// Shuffle similar-score ties and select top 6
+// Shuffle and pick top 6
 function finalizeResults(items) {
   items.sort((a, b) => b.score - a.score);
-  const top = items.slice(0, 12); // take more before randomizing
+  const top = items.slice(0, 12);
   return shuffleArray(top).slice(0, 6);
 }
 function shuffleArray(arr) {
@@ -156,7 +162,6 @@ async function fetchReferenceData(id, type) {
   }
 }
 
-// Pulls 200+ candidates from multiple TMDB sources
 async function fetchExpandedPool(type, genres, keywords) {
   const endpoints = [
     `discover/${type}?with_genres=${encodeURIComponent(genres || "")}&with_keywords=${encodeURIComponent(keywords || "")}`,
@@ -175,7 +180,6 @@ async function fetchExpandedPool(type, genres, keywords) {
     }
   }
 
-  // Deduplicate by ID
   const unique = new Map();
   for (const item of allResults) {
     if (!unique.has(item.id)) {
@@ -192,7 +196,6 @@ async function fetchExpandedPool(type, genres, keywords) {
   return Array.from(unique.values());
 }
 
-// Books & Spotify remain unchanged
 async function fetchBooks(query) {
   const q = encodeURIComponent(query || "fiction");
   const start = Math.floor(Math.random() * 5) * 20;
