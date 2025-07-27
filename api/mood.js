@@ -4,15 +4,23 @@ import fetch from "node-fetch";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const TMDB_KEY = process.env.TMDB_API_KEY || "c5bb9a766bdc90fcc8f7293f6cd9c26a";
-const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID; 
+const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 export default async function handler(req, res) {
+  // --- CORS HEADERS ---
+  res.setHeader("Access-Control-Allow-Origin", "*"); // or restrict to "https://mymoodmatch.com"
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") {
+    return res.status(200).end(); // Preflight response
+  }
+
   const { mood } = req.query;
   if (!mood) return res.status(400).json({ error: "Missing mood" });
 
   try {
-    // Step 1: Get embedding for user mood
+    // Step 1: Embed user mood
     const moodEmbedding = await embedText(mood);
 
     // Step 2: Fetch candidate content
@@ -23,7 +31,7 @@ export default async function handler(req, res) {
       fetchSpotifyPlaylist(mood)
     ]);
 
-    // Step 3: Score each candidate by cosine similarity
+    // Step 3: Score by cosine similarity
     const scoredMovies = await scoreItems(movies, moodEmbedding);
     const scoredTV = await scoreItems(tv, moodEmbedding);
     const scoredBooks = await scoreItems(books, moodEmbedding);
@@ -46,7 +54,6 @@ export default async function handler(req, res) {
 }
 
 // --- Helpers ---
-
 async function embedText(text) {
   const resp = await client.embeddings.create({
     model: "text-embedding-3-small",
