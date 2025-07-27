@@ -8,11 +8,13 @@ const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 export default async function handler(req, res) {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*"); // or "https://mymoodmatch.com"
+  // --- CORS: Only allow your frontend ---
+  res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") {
+    return res.status(200).end(); // Preflight check
+  }
 
   const { mood, refId, refType } = req.query;
   if (!mood) return res.status(400).json({ error: "Missing mood input" });
@@ -33,7 +35,7 @@ export default async function handler(req, res) {
     const context = `Mood: ${mood}, Reference: ${refTitle}, Keywords: ${refKeywords}, Genres: ${refGenres}`;
     const moodEmbedding = await embedText(context);
 
-    // Step 2: Fetch candidates
+    // Step 2: Fetch candidates (dynamic pool)
     const [movies, tv, books, spotify] = await Promise.all([
       fetchDiscover("movie", refGenres, refKeywords),
       fetchDiscover("tv", refGenres, refKeywords),
@@ -41,16 +43,16 @@ export default async function handler(req, res) {
       fetchSpotifyPlaylist(`${mood} ${refTitle}`)
     ]);
 
-    // Step 3: Embed and score
+    // Step 3: Score candidates by embeddings
     const scoredMovies = await scoreItems(movies, moodEmbedding);
     const scoredTV = await scoreItems(tv, moodEmbedding);
     const scoredBooks = await scoreItems(books, moodEmbedding);
 
     // Step 4: Return top picks
     res.status(200).json({
-      movies: scoredMovies.sort((a,b)=>b.score-a.score).slice(0,6),
-      tv: scoredTV.sort((a,b)=>b.score-a.score).slice(0,6),
-      books: scoredBooks.sort((a,b)=>b.score-a.score).slice(0,6),
+      movies: scoredMovies.sort((a, b) => b.score - a.score).slice(0, 6),
+      tv: scoredTV.sort((a, b) => b.score - a.score).slice(0, 6),
+      books: scoredBooks.sort((a, b) => b.score - a.score).slice(0, 6),
       spotify: spotify || null
     });
   } catch (e) {
@@ -114,7 +116,7 @@ async function fetchReferenceData(id, type) {
 }
 
 async function fetchDiscover(type, genres, keywords) {
-  const page = Math.floor(Math.random()*10)+1;
+  const page = Math.floor(Math.random() * 10) + 1;
   const genreParam = genres ? `&with_genres=${encodeURIComponent(genres)}` : "";
   const keywordParam = keywords ? `&with_keywords=${encodeURIComponent(keywords)}` : "";
   const url = `https://api.themoviedb.org/3/discover/${type}?api_key=${TMDB_KEY}&language=en-US&page=${page}${genreParam}${keywordParam}&vote_count.gte=50`;
@@ -122,7 +124,7 @@ async function fetchDiscover(type, genres, keywords) {
   const data = await resp.json();
   return (data.results || []).map(item => ({
     id: item.id,
-    title: type==="movie" ? item.title : item.name,
+    title: type === "movie" ? item.title : item.name,
     type,
     image: item.poster_path ? `https://image.tmdb.org/t/p/w200${item.poster_path}` : "",
     desc: item.overview || "",
@@ -132,7 +134,7 @@ async function fetchDiscover(type, genres, keywords) {
 
 async function fetchBooks(query) {
   const q = encodeURIComponent(query || "fiction");
-  const start = Math.floor(Math.random()*5)*20;
+  const start = Math.floor(Math.random() * 5) * 20;
   const resp = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=20&startIndex=${start}`);
   const data = await resp.json();
   return (data.items || []).map(b => ({
@@ -163,7 +165,7 @@ async function fetchSpotifyPlaylist(query) {
     const searchData = await searchResp.json();
     const playlists = searchData.playlists?.items || [];
     if (!playlists.length) return null;
-    const pick = playlists[Math.floor(Math.random()*playlists.length)];
+    const pick = playlists[Math.floor(Math.random() * playlists.length)];
     return `https://open.spotify.com/embed/playlist/${pick.id}`;
   } catch (e) {
     console.error("Spotify fetch failed:", e);
