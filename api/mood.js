@@ -91,6 +91,48 @@ async function fetchOpenAIPool(mood, criteria) {
 }
 
 
+        : item;
+    } catch {
+      return item;
+    }
+  }));
+  return results;
+}
+
+
+
+
+
+function cosineSimilarity(a,b){const dot=a.reduce((s,ai,i)=>s+ai*b[i],0);const normA=Math.sqrt(a.reduce((s,ai)=>s+ai*ai,0));const normB=Math.sqrt(b.reduce((s,bi)=>s+bi*bi,0));return dot/(normA*normB);} 
+
+
+}
+
+
+
+// --- EMBEDDING HELPERS ---
+
+// Single string (for mood context)
+async function embedText(text) {
+  const resp = await client.embeddings.create({
+    model: "text-embedding-3-small",
+    input: text
+  });
+  return resp.data[0].embedding;
+}
+
+// Batch embedding for multiple items (titles, descriptions, tags)
+async function embedTexts(texts) {
+  const resp = await client.embeddings.create({
+    model: "text-embedding-3-small",
+    input: texts
+  });
+  return resp.data.map(r => r.embedding);
+}
+
+
+// --- PARALLEL TMDB ENRICHMENT ---
+
 async function enrichPoolWithMetadata(pool) {
   const results = await Promise.all(pool.map(async (item) => {
     if (item.type === 'book') return item;
@@ -110,24 +152,19 @@ async function enrichPoolWithMetadata(pool) {
 }
 
 
-async function embedTexts(texts) {
-  const resp = await client.embeddings.create({
-    model: "text-embedding-3-small",  // cheapest & fastest
-    input: texts
-  });
-  return resp.data.map(r => r.embedding);
-}
+// --- BATCHED HYBRID SCORING ---
 
 async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitle = "") {
-  if (!items.length) return [];
+  if (!items || !items.length) return [];
 
-  // Prepare all texts for embedding in one batch
-  const texts = items.map(item => `${item.title} ${item.desc || ''} ${(Array.isArray(item.tags) ? item.tags.join(' ') : item.tags) || ''}`);
+  // Prepare all item texts for embedding
+  const texts = items.map(i => `${i.title} ${i.desc || ''} ${(Array.isArray(i.tags) ? i.tags.join(' ') : i.tags) || ''}`);
   const embeddings = await embedTexts(texts);
 
-  // Score each item
+  if (!embeddings || embeddings.length !== items.length) return [];
+
   const results = items.map((item, idx) => {
-    const sim = cosineSimilarity(moodEmbedding, embeddings[idx]);
+    const sim = cosineSimilarity(moodEmbedding, embeddings[idx] || []);
     const keywordScore = keywordOverlap(refKeywords, item.tags || '');
     const genreScore = genreOverlap(refGenres, item.tags || '');
     const score = (0.5 * sim) + (0.3 * keywordScore) + (0.2 * genreScore);
@@ -138,33 +175,26 @@ async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitl
 }
 
 
-function cosineSimilarity(a,b){const dot=a.reduce((s,ai,i)=>s+ai*b[i],0);const normA=Math.sqrt(a.reduce((s,ai)=>s+ai*ai,0));const normB=Math.sqrt(b.reduce((s,bi)=>s+bi*bi,0));return dot/(normA*normB);} 
+// --- FINALIZE RESULTS (SAFE) ---
+
+function finalizeResults(items) {
+  if (!Array.isArray(items)) return [];  // Prevents frontend 'slice' crash
+  items.sort((a, b) => (b.score || 0) - (a.score || 0));
+  return shuffleArray(items.slice(0, 12)).slice(0, 6);
+}
+
+
+// --- HELPER FUNCTIONS (safe for arrays) ---
 function keywordOverlap(ref, tags) {
   if (!ref.length || !tags) return 0;
-  const tagString = Array.isArray(tags) ? tags.join(" ") : tags;
+  const tagString = Array.isArray(tags) ? tags.join(' ') : tags;
   const t = tagString.toLowerCase().split(/[\s,]+/);
   return ref.filter(k => t.includes(k.toLowerCase())).length / (ref.length || 1);
 }
 
 function genreOverlap(ref, tags) {
   if (!ref.length || !tags) return 0;
-  const tagString = Array.isArray(tags) ? tags.join(" ") : tags;
+  const tagString = Array.isArray(tags) ? tags.join(' ') : tags;
   const t = tagString.toLowerCase().split(/[\s,]+/);
   return ref.filter(g => t.includes(g.toLowerCase())).length / (ref.length || 1);
-}
-
-function finalizeResults(items){items.sort((a,b)=>b.score-a.score);return shuffleArray(items.slice(0,12)).slice(0,6);} 
-function shuffleArray(arr){return arr.sort(()=>Math.random()-0.5);} 
-
-async function fetchSpotifyPlaylist(query){
-  try{
-    const tokenResp=await fetch("https://accounts.spotify.com/api/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded","Authorization":`Basic ${Buffer.from(`${SPOTIFY_ID}:${SPOTIFY_SECRET}`).toString("base64")}`},body:"grant_type=client_credentials"});
-    const {access_token}=await tokenResp.json();
-    const searchResp=await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`,{headers:{"Authorization":`Bearer ${access_token}`}});
-    const data=await searchResp.json();
-    const playlists=data.playlists?.items||[];
-    if(!playlists.length)return null;
-    const pick=playlists[Math.floor(Math.random()*playlists.length)];
-    return `https://open.spotify.com/embed/playlist/${pick.id}`;
-  }catch(e){console.error("Spotify fetch failed",e);return null;}
 }
