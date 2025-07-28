@@ -27,7 +27,7 @@ async function embedTexts(texts) {
 }
 
 
-// --- PARALLEL TMDB ENRICHMENT ---
+// --- PARALLEL TMDB ENRICHMENT --
 
 async function enrichPoolWithMetadata(pool) {
   const results = await Promise.all(pool.map(async (item) => {
