@@ -178,3 +178,4 @@ async function fetchOpenAIPool(mood, criteria) {
     return [];
   }
 }
+console.log("OPENAI_API_KEY in runtime:", process.env.OPENAI_API_KEY);
