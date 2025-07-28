@@ -187,4 +187,32 @@ async function fetchOpenAIPool(mood, criteria) {
     return [];
   }
 }
+async function fetchSpotifyPlaylist(query) {
+  try {
+    const tokenResp = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": `Basic ${Buffer.from(`${SPOTIFY_ID}:${SPOTIFY_SECRET}`).toString("base64")}`
+      },
+      body: "grant_type=client_credentials"
+    });
+    const { access_token } = await tokenResp.json();
+
+    const searchResp = await fetch(
+      `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`,
+      { headers: { "Authorization": `Bearer ${access_token}` } }
+    );
+    const data = await searchResp.json();
+    const playlists = data.playlists?.items || [];
+    if (!playlists.length) return null;
+
+    const pick = playlists[Math.floor(Math.random() * playlists.length)];
+    return `https://open.spotify.com/embed/playlist/${pick.id}`;
+  } catch (e) {
+    console.error("Spotify fetch failed", e);
+    return null;
+  }
+}
+
 console.log("OPENAI_API_KEY in runtime:", process.env.OPENAI_API_KEY);
