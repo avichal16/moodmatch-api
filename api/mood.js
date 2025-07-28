@@ -84,7 +84,7 @@ function finalizeResults(items) {
 function keywordOverlap(ref, tags) {
   if (!ref.length || !tags) return 0;
   const tagString = Array.isArray(tags) ? tags.join(' ') : tags;
-  const t = tagString.toLowerCase().split(/[\s,]+/); // single backslash for valid regex
+  const t = tagString.toLowerCase().split(/[\s,]+/);
   return ref.filter(k => t.includes(k.toLowerCase())).length / (ref.length || 1);
 }
 
