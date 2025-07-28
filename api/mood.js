@@ -47,7 +47,16 @@ async function enrichPoolWithMetadata(pool) {
   return results;
 }
 
+function cosineSimilarity(a, b) {
+  const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
+  const normA = Math.sqrt(a.reduce((sum, ai) => sum + ai * ai, 0));
+  const normB = Math.sqrt(b.reduce((sum, bi) => sum + bi * bi, 0));
+  return dot / (normA * normB);
+}
 
+function shuffleArray(arr) {
+  return arr.sort(() => Math.random() - 0.5);
+}
 // --- BATCHED HYBRID SCORING ---
 
 async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitle = "") {
