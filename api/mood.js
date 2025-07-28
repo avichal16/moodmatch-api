@@ -91,7 +91,7 @@ async function fetchOpenAIPool(mood, criteria) {
 }
 
 
-        : item;
+          item;
     } catch {
       return item;
     }
