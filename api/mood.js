@@ -8,7 +8,7 @@ const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 // --- EMBEDDING HELPERS ---
 
-// Single string (for mood context
+// Single string (for mood context)
 async function embedText(text) {
   const resp = await client.embeddings.create({
     model: "text-embedding-3-small",
