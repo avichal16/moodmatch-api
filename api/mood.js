@@ -6,7 +6,7 @@ const TMDB_KEY = process.env.TMDB_API_KEY;
 const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
-// --- EMBEDDING HELPERS ---
+// --- EMBEDDING HELPERS --
 
 // Single string (for mood contex)
 async function embedText(text) {
