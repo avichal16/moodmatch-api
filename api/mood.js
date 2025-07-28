@@ -105,10 +105,13 @@ function genreOverlap(ref, tags) {
 }
 
 export default async function handler(req, res) {
+  console.log("Mood API start", req.query);
+
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") console.log("Step 5: Ready to send results");
+  return res.status(200).end();
 
   const { query, mood, criteria, refId, refType } = req.query;
 
@@ -126,9 +129,12 @@ export default async function handler(req, res) {
       const movies = (movieRes.results || []).map(m => ({ id: m.id, title: m.title, type: 'movie', image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : '' }));
       const tv = (tvRes.results || []).map(t => ({ id: t.id, title: t.name, type: 'tv', image: t.poster_path ? `https://image.tmdb.org/t/p/w200${t.poster_path}` : '' }));
       const books = (bookRes.items || []).map(b => ({ id: b.id, title: b.volumeInfo?.title, type: 'book', image: b.volumeInfo?.imageLinks?.thumbnail || '' }));
-      return res.status(200).json([...movies.slice(0, 5), ...tv.slice(0, 5), ...books.slice(0, 5)]);
+      console.log("Step 5: Ready to send results");
+  return res.status(200).json([...movies.slice(0, 5), ...tv.slice(0, 5), ...books.slice(0, 5)]);
     } catch (e) {
-      return res.status(500).json({ error: "Search fetch failed", details: e.message });
+  console.error("Mood API failed", e);
+  return res.status(500).json({ error: "Recommendation failed", details: e.message });
+});
     }
   }
 
@@ -147,7 +153,9 @@ export default async function handler(req, res) {
     const spotify = await fetchSpotifyPlaylist(`${criteria} ${mood}`);
     res.status(200).json({ movies: finalizeResults(movies), tv: finalizeResults(tv), books: finalizeResults(books), spotify });
   } catch (e) {
-    res.status(500).json({ error: "Recommendation failed", details: e.message });
+  console.error("Mood API failed", e);
+  return res.status(500).json({ error: "Recommendation failed", details: e.message });
+});
   }
 }
 
@@ -183,9 +191,9 @@ async function fetchOpenAIPool(mood, criteria) {
     raw = raw.replace(/```json|```/g, "");
     return JSON.parse(raw);
   } catch (e) {
-    console.error("GPT parsing failed", raw);
-    return [];
-  }
+  console.error("Mood API failed", e);
+  return res.status(500).json({ error: "Recommendation failed", details: e.message });
+}
 }
 async function fetchSpotifyPlaylist(query) {
   try {
@@ -210,9 +218,9 @@ async function fetchSpotifyPlaylist(query) {
     const pick = playlists[Math.floor(Math.random() * playlists.length)];
     return `https://open.spotify.com/embed/playlist/${pick.id}`;
   } catch (e) {
-    console.error("Spotify fetch failed", e);
-    return null;
-  }
+  console.error("Mood API failed", e);
+  return res.status(500).json({ error: "Recommendation failed", details: e.message });
+}
 }
 
 console.log("OPENAI_API_KEY in runtime:", process.env.OPENAI_API_KEY);
