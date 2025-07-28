@@ -134,7 +134,7 @@ export default async function handler(req, res) {
     } catch (e) {
   console.error("Mood API failed", e);
   return res.status(500).json({ error: "Recommendation failed", details: e.message });
-});
+};
     }
   }
 
