@@ -107,13 +107,30 @@ function genreOverlap(ref, tags) {
 export default async function handler(req, res) {
   console.log("Mood API start", req.query);
 
+  // Set CORS headers
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") console.log("Step 5: Ready to send results");
-  return res.status(200).end();
 
-  const { query, mood, criteria, refId, refType } = req.query;
+  // Handle preflight requests (CORS)
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
+  try {
+    const { query, mood, criteria, refId, refType } = req.query;
+
+    // --- Your API logic goes here ---
+    // Example: fetch recommendations
+    const results = await getRecommendations({ mood, criteria, refId, refType });
+
+    res.status(200).json(results);
+  } catch (error) {
+    console.error("API error:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+}
+
 
   // Handle /api/searh
   if (query) {
