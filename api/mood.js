@@ -107,27 +107,33 @@ function genreOverlap(ref, tags) {
 export default async function handler(req, res) {
   console.log("Mood API start", req.query);
 
-  // Set CORS headers
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  // Always set CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  // Handle preflight requests (CORS)
+  // Handle preflight requests
   if (req.method === "OPTIONS") {
+    console.log("CORS preflight handled");
     return res.status(200).end();
   }
 
   try {
-    const { query, mood, criteria, refId, refType } = req.query;
+    const { mood, criteria, refId, refType } = req.query;
 
-    // --- Your API logic goes here ---
-    // Example: fetch recommendations
+    console.log("Fetching recommendations", { mood, criteria, refId, refType });
+
+    // Replace with your recommendation logic (GPT/TMDB/Spotify/etc.)
     const results = await getRecommendations({ mood, criteria, refId, refType });
 
+    console.log("Results ready", results);
     res.status(200).json(results);
   } catch (error) {
     console.error("API error:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+
+    // Ensure CORS is set even on errors
+    res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
+    res.status(500).json({ error: "Internal Server Error", details: error.message });
   }
 }
 
