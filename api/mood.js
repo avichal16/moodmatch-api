@@ -29,40 +29,93 @@ async function embedTexts(texts) {
 import stringSimilarity from "string-similarity"; // Added for approximate title matching
 
 async function enrichPoolWithMetadata(pool) {
-  const results = await Promise.all(pool.map(async (item) => {
-    if (item.type === "book") {
-      return item; // Skip TMDB for books
-    }
-    try {
-      const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
-      const searchUrl = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanTitle)}`;
-      const searchResp = await fetch(searchUrl).then(r => r.json());
-      if (!searchResp.results?.length) {
+  let successes = 0;
+  const results = await Promise.all(
+    pool.map(async item => {
+      if (item.type === "book") {
+        try {
+          const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
+          const searchUrl =
+            `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanTitle)}`;
+          const searchResp = await fetch(searchUrl).then(r => r.json());
+          console.log(
+            `Google Books search for "${cleanTitle}" -> ${searchResp.items?.length || 0} results`
+          );
+          if (!searchResp.items?.length) {
+            return item;
+          }
+          const titles = searchResp.items.map(b => b.volumeInfo?.title || "");
+          const bestIndex =
+            stringSimilarity.findBestMatch(cleanTitle, titles).bestMatchIndex;
+          const match = searchResp.items[bestIndex];
+          const chosenTitle = (match.volumeInfo?.title || "").slice(0, 80);
+          console.log(`Selected Google Books title: ${chosenTitle}`);
+          const cover = match.volumeInfo?.imageLinks?.thumbnail || "";
+          const description = match.volumeInfo?.description || item.desc || "";
+          const enriched = {
+            ...item,
+            id: match.id,
+            title: match.volumeInfo?.title || item.title,
+            desc: description,
+            image: cover
+          };
+          if (
+            (cover && !item.image) ||
+            (description && (!item.desc || description !== item.desc))
+          ) {
+            successes++;
+          }
+          return enriched;
+        } catch (err) {
+          console.error("Metadata enrichment failed for:", item.title, err);
+          return item;
+        }
+      }
+      try {
+        const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
+        const searchUrl = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanTitle)}`;
+        const searchResp = await fetch(searchUrl).then(r => r.json());
+        console.log(
+          `TMDB search for "${cleanTitle}" -> ${searchResp.results?.length || 0} results`
+        );
+        if (!searchResp.results?.length) {
+          return item;
+        }
+        const titles = searchResp.results.map(r => r.title || r.name || "");
+        const bestIndex =
+          stringSimilarity.findBestMatch(cleanTitle, titles).bestMatchIndex;
+        const match = searchResp.results[bestIndex];
+        const chosenTitle = (match.title || match.name || "").slice(0, 80);
+        console.log(`Selected TMDB title: ${chosenTitle}`);
+        let posterPath = match.poster_path;
+        let description = match.overview || item.desc || "";
+        if (!posterPath || !description) {
+          const detailUrl = `https://api.themoviedb.org/3/${item.type}/${match.id}?api_key=${TMDB_KEY}&language=en-US`;
+          const detailResp = await fetch(detailUrl).then(r => r.json());
+          posterPath = detailResp.poster_path || detailResp.backdrop_path || "";
+          description = detailResp.overview || description;
+        }
+        const enriched = {
+          ...item,
+          id: match.id,
+          title: match.title || match.name || item.title,
+          desc: description,
+          image: posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : ""
+        };
+        if (
+          (posterPath && !item.image) ||
+          (description && (!item.desc || description !== item.desc))
+        ) {
+          successes++;
+        }
+        return enriched;
+      } catch (err) {
+        console.error("Metadata enrichment failed for:", item.title, err);
         return item;
       }
-      const titles = searchResp.results.map(r => r.title || r.name || "");
-      const bestIndex = stringSimilarity.findBestMatch(cleanTitle, titles).bestMatchIndex;
-      const match = searchResp.results[bestIndex];
-      let posterPath = match.poster_path;
-      let description = match.overview || item.desc || "";
-      if (!posterPath || !description) {
-        const detailUrl = `https://api.themoviedb.org/3/${item.type}/${match.id}?api_key=${TMDB_KEY}&language=en-US`;
-        const detailResp = await fetch(detailUrl).then(r => r.json());
-        posterPath = detailResp.poster_path || detailResp.backdrop_path || "";
-        description = detailResp.overview || description;
-      }
-      return {
-        ...item,
-        id: match.id,
-        title: match.title || match.name || item.title,
-        desc: description,
-        image: posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : ""
-      };
-    } catch (err) {
-      console.error("Metadata enrichment failed for:", item.title, err);
-      return item;
-    }
-  }));
+    })
+  );
+  console.log(`Metadata enriched ${successes}/${pool.length} items`);
   return results;
 }
 
