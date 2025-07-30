@@ -290,7 +290,6 @@ async function fetchOpenAIPool(mood, criteria) {
     return [];
   }
 }
-}
 
 async function fetchSpotifyPlaylist(query) {
   try {
