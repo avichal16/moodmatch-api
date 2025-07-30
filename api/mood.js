@@ -2,6 +2,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const TMDB_KEY = process.env.TMDB_API_KEY;
+const TMDB_IMG_URL = "https://image.tmdb.org/t/p/w500";
 const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
@@ -28,19 +29,39 @@ async function embedTexts(texts) {
 async function enrichPoolWithMetadata(pool) {
   const results = await Promise.all(
     pool.map(async item => {
-      if (item.type === "book") return item;
       try {
+        if (item.type === "book") {
+          const q = encodeURIComponent(item.title);
+          const resp = await fetch(
+            `https://www.googleapis.com/books/v1/volumes?q=${q}`
+          ).then(r => r.json());
+          const match = resp.items?.[0];
+          return match
+            ? {
+                ...item,
+                id: match.id,
+                desc: item.desc || match.volumeInfo?.description || "",
+                image: match.volumeInfo?.imageLinks?.thumbnail || ""
+              }
+            : item;
+        }
+
         const query = encodeURIComponent(item.title);
-        const url = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${query}`;
-        const resp = await fetch(url).then(r => r.json());
+        const searchUrl = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${query}`;
+        const resp = await fetch(searchUrl).then(r => r.json());
         const match = resp.results?.[0];
-        return match
-          ? {
-              ...item,
-              id: match.id,
-              image: match.poster_path ? `https://image.tmdb.org/t/p/w200${match.poster_path}` : ""
-            }
-          : item;
+        if (!match) return item;
+
+        const details = await fetch(
+          `https://api.themoviedb.org/3/${item.type}/${match.id}?api_key=${TMDB_KEY}&language=en-US`
+        ).then(r => r.json());
+
+        return {
+          ...item,
+          id: match.id,
+          desc: item.desc || details.overview || "",
+          image: details.poster_path ? `${TMDB_IMG_URL}${details.poster_path}` : ""
+        };
       } catch {
         return item;
       }
@@ -128,29 +149,46 @@ export default async function handler(req, res) {
         fetch(tmdbTvUrl).then(r => r.json()),
         fetch(bookUrl).then(r => r.json())
       ]);
-      const movies = (movieRes.results || []).map(m => ({
-        id: m.id,
-        title: m.title,
-        type: "movie",
-        image: m.poster_path ? `https://image.tmdb.org/t/p/w200${m.poster_path}` : ""
-      }));
-      const tv = (tvRes.results || []).map(t => ({
-        id: t.id,
-        title: t.name,
-        type: "tv",
-        image: t.poster_path ? `https://image.tmdb.org/t/p/w200${t.poster_path}` : ""
-      }));
-      const books = (bookRes.items || []).map(b => ({
+
+      const movies = await Promise.all(
+        (movieRes.results || []).slice(0, 5).map(async m => {
+          const details = await fetch(
+            `https://api.themoviedb.org/3/movie/${m.id}?api_key=${TMDB_KEY}&language=en-US`
+          ).then(r => r.json());
+          return {
+            id: m.id,
+            title: m.title,
+            type: "movie",
+            desc: details.overview || "",
+            image: details.poster_path ? `${TMDB_IMG_URL}${details.poster_path}` : ""
+          };
+        })
+      );
+
+      const tv = await Promise.all(
+        (tvRes.results || []).slice(0, 5).map(async t => {
+          const details = await fetch(
+            `https://api.themoviedb.org/3/tv/${t.id}?api_key=${TMDB_KEY}&language=en-US`
+          ).then(r => r.json());
+          return {
+            id: t.id,
+            title: t.name,
+            type: "tv",
+            desc: details.overview || "",
+            image: details.poster_path ? `${TMDB_IMG_URL}${details.poster_path}` : ""
+          };
+        })
+      );
+
+      const books = (bookRes.items || []).slice(0, 5).map(b => ({
         id: b.id,
         title: b.volumeInfo?.title,
         type: "book",
+        desc: b.volumeInfo?.description || "",
         image: b.volumeInfo?.imageLinks?.thumbnail || ""
       }));
-      return res.status(200).json([
-        ...movies.slice(0, 5),
-        ...tv.slice(0, 5),
-        ...books.slice(0, 5)
-      ]);
+
+      return res.status(200).json([...movies, ...tv, ...books]);
     }
 
     if (!mood) {
@@ -211,7 +249,8 @@ async function fetchReferenceData(id, type) {
         title: data.volumeInfo?.title || "Unknown Book",
         overview: data.volumeInfo?.description || "",
         keywords: data.volumeInfo?.categories || [],
-        genres: data.volumeInfo?.categories || []
+        genres: data.volumeInfo?.categories || [],
+        image: data.volumeInfo?.imageLinks?.thumbnail || ""
       };
     }
     const details = await fetch(
@@ -224,7 +263,8 @@ async function fetchReferenceData(id, type) {
       title: details.title || details.name || "Unknown",
       overview: details.overview || "",
       keywords: (keywordsResp.keywords || []).map(k => k.name),
-      genres: (details.genres || []).map(g => g.name)
+      genres: (details.genres || []).map(g => g.name),
+      image: details.poster_path ? `${TMDB_IMG_URL}${details.poster_path}` : ""
     };
   } catch {
     return { title: "Unknown", overview: "", keywords: [], genres: [] };
