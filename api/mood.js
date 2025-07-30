@@ -285,8 +285,9 @@ async function fetchOpenAIPool(mood, criteria) {
   let raw = resp.choices[0]?.message?.content || "[]";
   try {
     return JSON.parse(raw);
-  } catch {
-    console.error("Invalid GPT response, returning empty pool.");
+  } catch (err) {
+    const truncated = raw.length > 500 ? raw.slice(0, 500) + "..." : raw;
+    console.error("Invalid GPT response:", truncated, err);
     return [];
   }
 }
