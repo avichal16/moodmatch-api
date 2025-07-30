@@ -283,6 +283,10 @@ async function fetchOpenAIPool(mood, criteria) {
   });
 
   let raw = resp.choices[0]?.message?.content || "[]";
+  raw = raw.trim();
+  if (raw.startsWith("```")) {
+    raw = raw.replace(/^```(?:json)?\n/, "").replace(/\n```$/, "");
+  }
   try {
     return JSON.parse(raw);
   } catch (err) {
@@ -320,5 +324,4 @@ async function fetchSpotifyPlaylist(query) {
   }
 }
 
-console.log("OPENAI_API_KEY in runtime:", process.env.OPENAI_API_KEY);
 
