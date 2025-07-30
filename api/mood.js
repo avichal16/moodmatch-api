@@ -241,6 +241,14 @@ if (!pool.length) {
   }));
 }
 const enrichedPool = await enrichPoolWithMetadata(pool);
+    const bookDebug = enrichedPool
+      .filter(i => i.type === "book")
+      .map(b => ({
+        title: b.title,
+        hasImage: !!b.image,
+        hasDesc: !!b.desc
+      }));
+    console.log("Book items after enrichment:", JSON.stringify(bookDebug));
 
     const moodEmbedding = await embedText(
       `Mood: ${mood}\nReference: ${refMeta.title}\nOverview: ${refMeta.overview}\nGenres: ${refMeta.genres.join(", ")}`
@@ -269,10 +277,21 @@ const enrichedPool = await enrichPoolWithMetadata(pool);
       )
     ]);
     const spotify = await fetchSpotifyPlaylist(`${criteria} ${mood}`);
+    const finalMovies = finalizeResults(movies);
+    const finalTv = finalizeResults(tv);
+    const finalBooks = finalizeResults(books);
+    console.log(
+      "Final books payload:",
+      finalBooks.map(b => ({
+        title: b.title,
+        image: !!b.image,
+        hasDesc: !!b.desc
+      }))
+    );
     res.status(200).json({
-      movies: finalizeResults(movies),
-      tv: finalizeResults(tv),
-      books: finalizeResults(books),
+      movies: finalMovies,
+      tv: finalTv,
+      books: finalBooks,
       spotify
     });
   } catch (e) {
