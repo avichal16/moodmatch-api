@@ -33,7 +33,43 @@ async function enrichPoolWithMetadata(pool) {
   const results = await Promise.all(
     pool.map(async item => {
       if (item.type === "book") {
-        return item; // Skip TMDB for books
+        try {
+          const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
+          const searchUrl =
+            `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(cleanTitle)}`;
+          const searchResp = await fetch(searchUrl).then(r => r.json());
+          console.log(
+            `Google Books search for "${cleanTitle}" -> ${searchResp.items?.length || 0} results`
+          );
+          if (!searchResp.items?.length) {
+            return item;
+          }
+          const titles = searchResp.items.map(b => b.volumeInfo?.title || "");
+          const bestIndex =
+            stringSimilarity.findBestMatch(cleanTitle, titles).bestMatchIndex;
+          const match = searchResp.items[bestIndex];
+          const chosenTitle = (match.volumeInfo?.title || "").slice(0, 80);
+          console.log(`Selected Google Books title: ${chosenTitle}`);
+          const cover = match.volumeInfo?.imageLinks?.thumbnail || "";
+          const description = match.volumeInfo?.description || item.desc || "";
+          const enriched = {
+            ...item,
+            id: match.id,
+            title: match.volumeInfo?.title || item.title,
+            desc: description,
+            image: cover
+          };
+          if (
+            (cover && !item.image) ||
+            (description && (!item.desc || description !== item.desc))
+          ) {
+            successes++;
+          }
+          return enriched;
+        } catch (err) {
+          console.error("Metadata enrichment failed for:", item.title, err);
+          return item;
+        }
       }
       try {
         const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
