@@ -179,7 +179,7 @@ export default async function handler(req, res) {
       refId && refType
         ? await fetchReferenceData(refId, refType)
         : { keywords: [], genres: [], title: "", overview: "" };
-    const pool = await fetchOpenAIPool(mood, criteria);
+    let pool = await fetchOpenAIPool(mood, criteria);
     
 if (!pool.length) {
   const trendingResp = await fetch(`https://api.themoviedb.org/3/trending/movie/week?api_key=${TMDB_KEY}`).then(r => r.json());
