@@ -383,6 +383,14 @@ async function fetchOpenAIPool(mood, criteria) {
 
 async function fetchSpotifyPlaylist(query) {
   try {
+    if (!SPOTIFY_ID || !SPOTIFY_SECRET) {
+      console.error("Missing Spotify credentials", {
+        hasId: !!SPOTIFY_ID,
+        hasSecret: !!SPOTIFY_SECRET
+      });
+      return null;
+    }
+    console.log("Requesting Spotify token for:", query);
     const tokenResp = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
       headers: {
@@ -391,15 +399,20 @@ async function fetchSpotifyPlaylist(query) {
       },
       body: "grant_type=client_credentials"
     });
+    console.log("Token status:", tokenResp.status);
     const { access_token } = await tokenResp.json();
 
     const searchResp = await fetch(
       `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`,
       { headers: { Authorization: `Bearer ${access_token}` } }
     );
+    console.log("Search status:", searchResp.status);
     const data = await searchResp.json();
     const playlists = data.playlists?.items || [];
-    if (!playlists.length) return null;
+    if (!playlists.length) {
+      console.log("No playlists returned");
+      return null;
+    }
 
     const pick = playlists[Math.floor(Math.random() * playlists.length)];
     return `https://open.spotify.com/embed/playlist/${pick.id}`;
