@@ -25,29 +25,47 @@ async function embedTexts(texts) {
 
 // --- PARALLEL TMDB ENRICHMENT ---
 
+
+import stringSimilarity from "string-similarity"; // Added for approximate title matching
+
 async function enrichPoolWithMetadata(pool) {
-  const results = await Promise.all(
-    pool.map(async item => {
-      if (item.type === "book") return item;
-      try {
-        const query = encodeURIComponent(item.title);
-        const url = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${query}`;
-        const resp = await fetch(url).then(r => r.json());
-        const match = resp.results?.[0];
-        return match
-          ? {
-              ...item,
-              id: match.id,
-              image: match.poster_path ? `https://image.tmdb.org/t/p/w200${match.poster_path}` : ""
-            }
-          : item;
-      } catch {
+  const results = await Promise.all(pool.map(async (item) => {
+    if (item.type === "book") {
+      return item; // Skip TMDB for books
+    }
+    try {
+      const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
+      const searchUrl = `https://api.themoviedb.org/3/search/${item.type}?api_key=${TMDB_KEY}&query=${encodeURIComponent(cleanTitle)}`;
+      const searchResp = await fetch(searchUrl).then(r => r.json());
+      if (!searchResp.results?.length) {
         return item;
       }
-    })
-  );
+      const titles = searchResp.results.map(r => r.title || r.name || "");
+      const bestIndex = stringSimilarity.findBestMatch(cleanTitle, titles).bestMatchIndex;
+      const match = searchResp.results[bestIndex];
+      let posterPath = match.poster_path;
+      let description = match.overview || item.desc || "";
+      if (!posterPath || !description) {
+        const detailUrl = `https://api.themoviedb.org/3/${item.type}/${match.id}?api_key=${TMDB_KEY}&language=en-US`;
+        const detailResp = await fetch(detailUrl).then(r => r.json());
+        posterPath = detailResp.poster_path || detailResp.backdrop_path || "";
+        description = detailResp.overview || description;
+      }
+      return {
+        ...item,
+        id: match.id,
+        title: match.title || match.name || item.title,
+        desc: description,
+        image: posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : ""
+      };
+    } catch (err) {
+      console.error("Metadata enrichment failed for:", item.title, err);
+      return item;
+    }
+  }));
   return results;
 }
+
 
 function cosineSimilarity(a, b) {
   const dot = a.reduce((sum, ai, i) => sum + ai * b[i], 0);
@@ -162,7 +180,20 @@ export default async function handler(req, res) {
         ? await fetchReferenceData(refId, refType)
         : { keywords: [], genres: [], title: "", overview: "" };
     const pool = await fetchOpenAIPool(mood, criteria);
-    const enrichedPool = await enrichPoolWithMetadata(pool);
+    
+if (!pool.length) {
+  const trendingResp = await fetch(`https://api.themoviedb.org/3/trending/movie/week?api_key=${TMDB_KEY}`).then(r => r.json());
+  pool = (trendingResp.results || []).slice(0, 15).map(m => ({
+    title: m.title,
+    type: "movie",
+    tags: [],
+    desc: m.overview || "Trending movie",
+    id: m.id,
+    image: m.poster_path ? `https://image.tmdb.org/t/p/w500${m.poster_path}` : ""
+  }));
+}
+const enrichedPool = await enrichPoolWithMetadata(pool);
+
     const moodEmbedding = await embedText(
       `Mood: ${mood}\nReference: ${refMeta.title}\nOverview: ${refMeta.overview}\nGenres: ${refMeta.genres.join(", ")}`
     );
@@ -231,21 +262,34 @@ async function fetchReferenceData(id, type) {
   }
 }
 
+
 async function fetchOpenAIPool(mood, criteria) {
-  const prompt = `Return a JSON array (no extra text) of 20 recommendations for Mood: ${mood}, Style: ${criteria}. Each object must have: title (string), type ("movie"|"tv"|"book"), desc (string), genre (string[]), tags (string[]).`;
+  const prompt = `
+  Recommend 12 movies, 8 TV shows, and 5 books that match this mood:
+  Mood: ${mood}.
+  Criteria: ${criteria} (focus on popular, widely available content).
+
+  Output a JSON array ONLY with:
+  - "title" (no year, emojis, or extra characters),
+  - "type" ("movie", "tv", or "book"),
+  - "tags" (array of genres),
+  - "desc" (1-sentence mood-matched summary).
+  `;
+
   const resp = await client.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     temperature: 0.7
   });
+
   let raw = resp.choices[0]?.message?.content || "[]";
   try {
-    raw = raw.replace(/```json|```/g, "");
     return JSON.parse(raw);
-  } catch (e) {
-    console.error("OpenAI parse failed", e);
+  } catch {
+    console.error("Invalid GPT response, returning empty pool.");
     return [];
   }
+}
 }
 
 async function fetchSpotifyPlaylist(query) {
