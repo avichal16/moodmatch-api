@@ -33,7 +33,38 @@ async function enrichPoolWithMetadata(pool) {
   const results = await Promise.all(
     pool.map(async item => {
       if (item.type === "book") {
-        return item; // Skip TMDB for books
+        try {
+          const searchUrl =
+            `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(
+              item.title
+            )}&maxResults=5`;
+          const searchResp = await fetch(searchUrl).then(r => r.json());
+          if (!searchResp.items?.length) {
+            return item;
+          }
+          const titles = searchResp.items.map(b => b.volumeInfo?.title || "");
+          const bestIndex = stringSimilarity.findBestMatch(item.title, titles)
+            .bestMatchIndex;
+          const match = searchResp.items[bestIndex];
+          const info = match.volumeInfo || {};
+          const enriched = {
+            ...item,
+            id: match.id,
+            title: info.title || item.title,
+            desc: info.description || item.desc,
+            image: (info.imageLinks?.thumbnail || "").replace(/^http:/, "https:")
+          };
+          if (
+            (!item.image && enriched.image) ||
+            (info.description && info.description !== item.desc)
+          ) {
+            successes++;
+          }
+          return enriched;
+        } catch (err) {
+          console.error("Book enrichment failed for:", item.title, err);
+          return item;
+        }
       }
       try {
         const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
