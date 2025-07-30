@@ -128,15 +128,19 @@ function shuffleArray(arr) {
 
 // --- BATCHED HYBRID SCORING ---
 
-async function hybridScore(items, moodEmbedding, refKeywords, refGenres, refTitle = "") {
+async function hybridScore(
+  items,
+  itemEmbeddings,
+  moodEmbedding,
+  refKeywords,
+  refGenres,
+  refTitle = ""
+) {
   if (!items || !items.length) return [];
-
-  const texts = items.map(i => `${i.title} ${i.desc || ""} ${(Array.isArray(i.tags) ? i.tags.join(" ") : i.tags) || ""}`);
-  const embeddings = await embedTexts(texts);
-  if (!embeddings || embeddings.length !== items.length) return [];
+  if (!itemEmbeddings || itemEmbeddings.length !== items.length) return [];
 
   const results = items.map((item, idx) => {
-    const sim = cosineSimilarity(moodEmbedding, embeddings[idx] || []);
+    const sim = cosineSimilarity(moodEmbedding, itemEmbeddings[idx] || []);
     const keywordScore = keywordOverlap(refKeywords, item.tags || "");
     const genreScore = genreOverlap(refGenres, item.tags || "");
     const score = 0.5 * sim + 0.3 * keywordScore + 0.2 * genreScore;
@@ -253,23 +257,37 @@ const enrichedPool = await enrichPoolWithMetadata(pool);
     const moodEmbedding = await embedText(
       `Mood: ${mood}\nReference: ${refMeta.title}\nOverview: ${refMeta.overview}\nGenres: ${refMeta.genres.join(", ")}`
     );
+
+    const moviesPool = enrichedPool.filter(i => i.type === "movie");
+    const tvPool = enrichedPool.filter(i => i.type === "tv");
+    const bookPool = enrichedPool.filter(i => i.type === "book");
+    const combined = [...moviesPool, ...tvPool, ...bookPool];
+    const texts = combined.map(i => `${i.title} ${i.desc || ""} ${(Array.isArray(i.tags) ? i.tags.join(" ") : i.tags) || ""}`);
+    const allEmbeddings = await embedTexts(texts);
+    const movieEmbeddings = allEmbeddings.slice(0, moviesPool.length);
+    const tvEmbeddings = allEmbeddings.slice(moviesPool.length, moviesPool.length + tvPool.length);
+    const bookEmbeddings = allEmbeddings.slice(moviesPool.length + tvPool.length);
+
     const [movies, tv, books] = await Promise.all([
       hybridScore(
-        enrichedPool.filter(i => i.type === "movie"),
+        moviesPool,
+        movieEmbeddings,
         moodEmbedding,
         refMeta.keywords,
         refMeta.genres,
         refMeta.title
       ),
       hybridScore(
-        enrichedPool.filter(i => i.type === "tv"),
+        tvPool,
+        tvEmbeddings,
         moodEmbedding,
         refMeta.keywords,
         refMeta.genres,
         refMeta.title
       ),
       hybridScore(
-        enrichedPool.filter(i => i.type === "book"),
+        bookPool,
+        bookEmbeddings,
         moodEmbedding,
         refMeta.keywords,
         refMeta.genres,
