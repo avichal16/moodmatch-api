@@ -2,16 +2,11 @@ const TMDB_KEY = process.env.TMDB_API_KEY;
 
 function isAllowedOrigin(origin) {
   if (!origin) return false;
-  if (origin === "https://mymoodmatch.com" || origin === "https://www.mymoodmatch.com") return true;
+  if (["https://mymoodmatch.com", "https://www.mymoodmatch.com"].includes(origin)) return true;
   try {
     const { hostname, protocol } = new URL(origin);
-    return protocol === "https:" && (
-      hostname === "moodmatch-frontend.vercel.app" ||
-      (hostname.endsWith(".vercel.app") && hostname.includes("moodmatch-frontend"))
-    );
-  } catch {
-    return false;
-  }
+    return protocol === "https:" && (hostname === "moodmatch-frontend.vercel.app" || (hostname.endsWith(".vercel.app") && hostname.includes("moodmatch-frontend")));
+  } catch { return false; }
 }
 
 function setCors(req, res) {
@@ -40,17 +35,36 @@ function uniqueMovies(items, excludeId) {
     .sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0));
 }
 
+async function searchEverything(query) {
+  const [multi, genres, keywords] = await Promise.all([
+    tmdb(`/search/multi?query=${encodeURIComponent(query)}&include_adult=false`),
+    tmdb(`/genre/movie/list`),
+    tmdb(`/search/keyword?query=${encodeURIComponent(query)}`)
+  ]);
+  const q = query.toLowerCase();
+  const genreResults = (genres.genres || [])
+    .filter(g => g.name.toLowerCase().includes(q))
+    .map(g => ({ type: "genre", id: g.id, name: g.name, subtitle: "Film genre" }));
+  const entityResults = (multi.results || [])
+    .filter(item => item.media_type === "movie" || item.media_type === "person")
+    .slice(0, 10)
+    .map(item => item.media_type === "movie"
+      ? { type: "movie", id: item.id, name: item.title, subtitle: item.release_date?.slice(0, 4) || "Movie", image: item.poster_path }
+      : { type: "person", id: item.id, name: item.name, subtitle: item.known_for_department || "Filmmaker / performer", image: item.profile_path });
+  const styleResults = (keywords.results || []).slice(0, 6).map(k => ({ type: "style", id: k.id, name: k.name, subtitle: "Theme / style / subject" }));
+  return [...genreResults, ...entityResults, ...styleResults].slice(0, 16);
+}
+
 export default async function handler(req, res) {
   setCors(req, res);
   if (req.method === "OPTIONS") return res.status(204).end();
 
   try {
-    const { query, id, random, personId, genreId } = req.query;
+    const { query, id, random, personId, genreId, keywordId } = req.query;
 
     if (query) {
       res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
-      const data = await tmdb(`/search/movie?query=${encodeURIComponent(query)}&include_adult=false`);
-      return res.status(200).json(uniqueMovies(data.results).slice(0, 10));
+      return res.status(200).json(await searchEverything(query));
     }
 
     if (random) {
@@ -62,17 +76,15 @@ export default async function handler(req, res) {
     }
 
     if (personId) {
-      res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
-      const [person, credits] = await Promise.all([
-        tmdb(`/person/${personId}`),
-        tmdb(`/person/${personId}/movie_credits`)
-      ]);
-      const directed = uniqueMovies((credits.crew || []).filter(item => item.job === "Director")).slice(0, 18);
-      return res.status(200).json({ type: "director", person, movies: directed });
+      const [person, credits] = await Promise.all([tmdb(`/person/${personId}`), tmdb(`/person/${personId}/movie_credits`)]);
+      const directed = uniqueMovies((credits.crew || []).filter(item => item.job === "Director"));
+      const acted = uniqueMovies(credits.cast || []);
+      const role = directed.length >= 3 ? "director" : "actor";
+      const movies = uniqueMovies([...directed, ...acted]).slice(0, 18);
+      return res.status(200).json({ type: role, person, movies, directed: directed.slice(0, 12), acted: acted.slice(0, 12) });
     }
 
     if (genreId) {
-      res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
       const [genres, movies] = await Promise.all([
         tmdb(`/genre/movie/list`),
         tmdb(`/discover/movie?with_genres=${encodeURIComponent(genreId)}&sort_by=vote_count.desc&include_adult=false`)
@@ -81,28 +93,24 @@ export default async function handler(req, res) {
       return res.status(200).json({ type: "genre", genre, movies: uniqueMovies(movies.results).slice(0, 18) });
     }
 
-    if (!id) return res.status(400).json({ error: "Provide query, id, random, personId, or genreId" });
+    if (keywordId) {
+      const [keyword, movies] = await Promise.all([
+        tmdb(`/keyword/${keywordId}`),
+        tmdb(`/discover/movie?with_keywords=${encodeURIComponent(keywordId)}&sort_by=vote_count.desc&include_adult=false`)
+      ]);
+      return res.status(200).json({ type: "style", style: keyword, movies: uniqueMovies(movies.results).slice(0, 18) });
+    }
 
-    res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
+    if (!id) return res.status(400).json({ error: "Provide query, id, random, personId, genreId, or keywordId" });
+
     const [details, credits, similar, recommendations, keywords] = await Promise.all([
-      tmdb(`/movie/${id}`),
-      tmdb(`/movie/${id}/credits`),
-      tmdb(`/movie/${id}/similar`),
-      tmdb(`/movie/${id}/recommendations`),
-      tmdb(`/movie/${id}/keywords`)
+      tmdb(`/movie/${id}`), tmdb(`/movie/${id}/credits`), tmdb(`/movie/${id}/similar`), tmdb(`/movie/${id}/recommendations`), tmdb(`/movie/${id}/keywords`)
     ]);
-
     const director = (credits.crew || []).find(person => person.job === "Director") || null;
-    const related = uniqueMovies([...(recommendations.results || []), ...(similar.results || [])], id).slice(0, 14);
-
-    return res.status(200).json({
-      type: "movie",
-      movie: details,
-      director,
-      genres: details.genres || [],
-      keywords: (keywords.keywords || []).slice(0, 10),
-      related
-    });
+    const cast = (credits.cast || []).slice(0, 5);
+    const styles = (keywords.keywords || []).slice(0, 6);
+    const related = uniqueMovies([...(recommendations.results || []), ...(similar.results || [])], id).slice(0, 12);
+    return res.status(200).json({ type: "movie", movie: details, director, cast, genres: details.genres || [], styles, keywords: styles, related });
   } catch (error) {
     console.error("CineMap request failed", error);
     return res.status(500).json({ error: "CineMap request failed", details: error.message });
