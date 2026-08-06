@@ -1,5 +1,21 @@
 const TMDB_KEY = process.env.TMDB_API_KEY;
 
+const ALLOWED_ORIGINS = new Set([
+  "https://mymoodmatch.com",
+  "https://www.mymoodmatch.com",
+  "https://moodmatch-frontend.vercel.app"
+]);
+
+function setCors(req, res) {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
 async function tmdb(path) {
   if (!TMDB_KEY) throw new Error("Missing TMDB_API_KEY");
   const joiner = path.includes("?") ? "&" : "?";
@@ -17,13 +33,9 @@ function uniqueMovies(items, excludeId) {
 }
 
 export default async function handler(req, res) {
-  const allowedOrigins = new Set(["https://mymoodmatch.com", "https://www.mymoodmatch.com"]);
-  const origin = req.headers.origin;
-  if (allowedOrigins.has(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  setCors(req, res);
   res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") return res.status(204).end();
 
   try {
     const { query, id, random, personId, genreId } = req.query;
