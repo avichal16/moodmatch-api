@@ -1,10 +1,26 @@
 import stringSimilarity from "string-similarity";
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const TMDB_KEY = process.env.TMDB_API_KEY;
 const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID;
 const SPOTIFY_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+
+const ALLOWED_ORIGINS = new Set([
+  "https://mymoodmatch.com",
+  "https://www.mymoodmatch.com",
+  "https://moodmatch-frontend.vercel.app"
+]);
+
+function setCors(req, res) {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
 
 const recommendationSchema = {
   type: "ARRAY",
@@ -74,23 +90,17 @@ async function fetchGeminiPool(mood, criteria, refMeta) {
     ? `SIGNAL WEIGHTS:\n- Selected previous title: 75% (dominant signal)\n- Current mood/request: 20%\n- Content style: 5%\n\nTreat the selected title as the clearest evidence of the user's taste. Infer its tone, themes, pacing, character dynamics, world-building, humor, emotional texture, and audience appeal. At least 5 of the 8 recommendations in EACH category must strongly share two or more of those traits. Do not merely return generic items matching the mood. Do not recommend the selected title itself, direct sequels, remakes, or obvious same-franchise entries unless no reasonable alternative exists. Each reason must explicitly identify the specific trait shared with ${refMeta.title}.`
     : `SIGNAL WEIGHTS:\n- Current mood/request: 80%\n- Content style: 20%`;
 
-  const prompt = `You are MoodMatch, an expert cross-media recommendation engine.
-
-${reference}
-Current mood or request: ${mood}
-Content style: ${criteria || "popular"}
-${weighting}
-
-Always recommend all three categories in one response: exactly 8 movies, 8 TV shows, and 8 books.
-Choose real works that can be found in TMDB or Google Books. Preserve cross-media relevance: a selected movie may strongly influence TV and book picks, and vice versa. Avoid duplicate franchises and near-identical choices. Include international choices when appropriate. Return a fresh set rather than repeating the most obvious defaults. Score each item from 0 to 1 based primarily on fit to the selected previous title when one exists. Return only schema-valid JSON.
-Variation seed: ${variationSeed}`;
+  const prompt = `You are MoodMatch, an expert cross-media recommendation engine.\n\n${reference}\nCurrent mood or request: ${mood}\nContent style: ${criteria || "popular"}\n${weighting}\n\nAlways recommend all three categories in one response: exactly 8 movies, 8 TV shows, and 8 books. Choose real works that can be found in TMDB or Google Books. Preserve cross-media relevance. Avoid duplicate franchises and near-identical choices. Include international choices when appropriate. Return a fresh set rather than repeating obvious defaults. Score each item from 0 to 1 based primarily on fit to the selected previous title when one exists. Return only schema-valid JSON.\nVariation seed: ${variationSeed}`;
 
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.95, responseMimeType: "application/json", responseSchema: recommendationSchema }
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: recommendationSchema
+      }
     })
   });
 
@@ -108,7 +118,13 @@ async function enrichItem(item) {
       const titles = data.items.map(book => book.volumeInfo?.title || "");
       const match = data.items[stringSimilarity.findBestMatch(item.title, titles).bestMatchIndex];
       const info = match.volumeInfo || {};
-      return { ...item, id: match.id, title: info.title || item.title, desc: info.description || item.desc, image: (info.imageLinks?.thumbnail || "").replace(/^http:/, "https:") };
+      return {
+        ...item,
+        id: match.id,
+        title: info.title || item.title,
+        desc: info.description || item.desc,
+        image: (info.imageLinks?.thumbnail || "").replace(/^http:/, "https:")
+      };
     } catch (error) {
       console.error("Book enrichment failed", item.title, error);
       return item;
@@ -122,7 +138,13 @@ async function enrichItem(item) {
     if (!data.results?.length) return item;
     const titles = data.results.map(result => result.title || result.name || "");
     const match = data.results[stringSimilarity.findBestMatch(cleanTitle, titles).bestMatchIndex];
-    return { ...item, id: match.id, title: match.title || match.name || item.title, desc: match.overview || item.desc, image: match.poster_path ? `https://image.tmdb.org/t/p/w500${match.poster_path}` : "" };
+    return {
+      ...item,
+      id: match.id,
+      title: match.title || match.name || item.title,
+      desc: match.overview || item.desc,
+      image: match.poster_path ? `https://image.tmdb.org/t/p/w500${match.poster_path}` : ""
+    };
   } catch (error) {
     console.error("TMDB enrichment failed", item.title, error);
     return item;
@@ -137,11 +159,19 @@ async function fetchReferenceData(id, type) {
   try {
     if (type === "book") {
       const data = await fetch(`https://www.googleapis.com/books/v1/volumes/${id}`).then(r => r.json());
-      return { title: data.volumeInfo?.title || "", overview: data.volumeInfo?.description || "", genres: data.volumeInfo?.categories || [] };
+      return {
+        title: data.volumeInfo?.title || "",
+        overview: data.volumeInfo?.description || "",
+        genres: data.volumeInfo?.categories || []
+      };
     }
     if (!TMDB_KEY) return { title: "", overview: "", genres: [] };
     const data = await fetch(`https://api.themoviedb.org/3/${type}/${id}?api_key=${TMDB_KEY}&language=en-US`).then(r => r.json());
-    return { title: data.title || data.name || "", overview: data.overview || "", genres: (data.genres || []).map(genre => genre.name) };
+    return {
+      title: data.title || data.name || "",
+      overview: data.overview || "",
+      genres: (data.genres || []).map(genre => genre.name)
+    };
   } catch {
     return { title: "", overview: "", genres: [] };
   }
@@ -152,12 +182,17 @@ async function fetchSpotifyPlaylist(query) {
     if (!SPOTIFY_ID || !SPOTIFY_SECRET) return null;
     const tokenResponse = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(`${SPOTIFY_ID}:${SPOTIFY_SECRET}`).toString("base64")}` },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${SPOTIFY_ID}:${SPOTIFY_SECRET}`).toString("base64")}`
+      },
       body: "grant_type=client_credentials"
     });
     if (!tokenResponse.ok) return null;
     const { access_token } = await tokenResponse.json();
-    const data = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`, { headers: { Authorization: `Bearer ${access_token}` } }).then(r => r.json());
+    const data = await fetch(`https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=playlist&limit=5`, {
+      headers: { Authorization: `Bearer ${access_token}` }
+    }).then(r => r.json());
     const playlists = (data.playlists?.items || []).filter(Boolean);
     if (!playlists.length) return null;
     const pick = playlists[Math.floor(Math.random() * playlists.length)];
@@ -174,6 +209,7 @@ async function searchCatalog(query) {
     fetch(`https://api.themoviedb.org/3/search/tv?api_key=${TMDB_KEY}&query=${encodeURIComponent(query)}`).then(r => r.json()),
     fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}`).then(r => r.json())
   ]);
+
   return [
     ...(movieData.results || []).slice(0, 5).map(item => ({ id: item.id, title: item.title, type: "movie", image: item.poster_path ? `https://image.tmdb.org/t/p/w200${item.poster_path}` : "" })),
     ...(tvData.results || []).slice(0, 5).map(item => ({ id: item.id, title: item.name, type: "tv", image: item.poster_path ? `https://image.tmdb.org/t/p/w200${item.poster_path}` : "" })),
@@ -182,12 +218,11 @@ async function searchCatalog(query) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
+  setCors(req, res);
+  if (req.method === "OPTIONS") return res.status(204).end();
 
   const { query, mood, criteria = "popular", refId, refType } = req.query;
+
   try {
     if (query) return res.status(200).json(await searchCatalog(query));
     if (!mood) return res.status(400).json({ error: "Missing mood input" });
