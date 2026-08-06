@@ -9,27 +9,57 @@ async function tmdb(path) {
   return data;
 }
 
+function uniqueMovies(items, excludeId) {
+  return (items || [])
+    .filter(item => item?.id && item.id !== Number(excludeId) && item.poster_path)
+    .filter((item, index, list) => list.findIndex(other => other.id === item.id) === index)
+    .sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0));
+}
+
 export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "https://mymoodmatch.com");
+  const allowedOrigins = new Set(["https://mymoodmatch.com", "https://www.mymoodmatch.com"]);
+  const origin = req.headers.origin;
+  if (allowedOrigins.has(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
   if (req.method === "OPTIONS") return res.status(200).end();
 
   try {
-    const { query, id, random } = req.query;
+    const { query, id, random, personId, genreId } = req.query;
+
     if (query) {
       const data = await tmdb(`/search/movie?query=${encodeURIComponent(query)}&include_adult=false`);
-      return res.status(200).json((data.results || []).slice(0, 10));
+      return res.status(200).json(uniqueMovies(data.results).slice(0, 10));
     }
 
     if (random) {
-      const page = Math.floor(Math.random() * 8) + 1;
-      const data = await tmdb(`/movie/popular?page=${page}`);
-      const pool = data.results || [];
+      const page = Math.floor(Math.random() * 15) + 1;
+      const data = await tmdb(`/movie/top_rated?page=${page}`);
+      const pool = uniqueMovies(data.results);
       return res.status(200).json(pool[Math.floor(Math.random() * pool.length)] || null);
     }
 
-    if (!id) return res.status(400).json({ error: "Provide query, id, or random" });
+    if (personId) {
+      const [person, credits] = await Promise.all([
+        tmdb(`/person/${personId}`),
+        tmdb(`/person/${personId}/movie_credits`)
+      ]);
+      const directed = uniqueMovies((credits.crew || []).filter(item => item.job === "Director")).slice(0, 18);
+      return res.status(200).json({ type: "director", person, movies: directed });
+    }
+
+    if (genreId) {
+      const [genres, movies] = await Promise.all([
+        tmdb(`/genre/movie/list`),
+        tmdb(`/discover/movie?with_genres=${encodeURIComponent(genreId)}&sort_by=vote_count.desc&include_adult=false`)
+      ]);
+      const genre = (genres.genres || []).find(item => item.id === Number(genreId)) || { id: Number(genreId), name: "Genre" };
+      return res.status(200).json({ type: "genre", genre, movies: uniqueMovies(movies.results).slice(0, 18) });
+    }
+
+    if (!id) return res.status(400).json({ error: "Provide query, id, random, personId, or genreId" });
+
     const [details, credits, similar, recommendations, keywords] = await Promise.all([
       tmdb(`/movie/${id}`),
       tmdb(`/movie/${id}/credits`),
@@ -39,19 +69,18 @@ export default async function handler(req, res) {
     ]);
 
     const director = (credits.crew || []).find(person => person.job === "Director") || null;
-    const related = [...(recommendations.results || []), ...(similar.results || [])]
-      .filter((item, index, list) => item.id !== Number(id) && list.findIndex(other => other.id === item.id) === index)
-      .sort((a, b) => (b.vote_count || 0) - (a.vote_count || 0))
-      .slice(0, 12);
+    const related = uniqueMovies([...(recommendations.results || []), ...(similar.results || [])], id).slice(0, 14);
 
     return res.status(200).json({
+      type: "movie",
       movie: details,
       director,
       genres: details.genres || [],
-      keywords: (keywords.keywords || []).slice(0, 8),
+      keywords: (keywords.keywords || []).slice(0, 10),
       related
     });
   } catch (error) {
+    console.error("CineMap request failed", error);
     return res.status(500).json({ error: "CineMap request failed", details: error.message });
   }
 }
