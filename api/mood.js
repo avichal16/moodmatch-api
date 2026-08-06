@@ -34,7 +34,7 @@ function normalizeItems(items) {
       title: String(item.title).replace(/\s*\([^)]*\)\s*$/, "").trim(),
       tags: Array.isArray(item.tags) ? item.tags : [],
       desc: String(item.desc || "").trim(),
-      reason: String(item.reason || "Matched your mood").trim(),
+      reason: String(item.reason || "Matched your preferences").trim(),
       score: Math.max(0, Math.min(1, Number(item.score) || 0.5))
     }))
     .filter(item => {
@@ -63,24 +63,37 @@ function createPlanTitle(mood, criteria) {
 
 async function fetchGeminiPool(mood, criteria, refMeta) {
   if (!GEMINI_KEY) throw new Error("Missing GEMINI_API_KEY");
-  const reference = refMeta?.title
-    ? `Reference title: ${refMeta.title}. Reference overview: ${refMeta.overview || ""}. Reference genres: ${(refMeta.genres || []).join(", ")}.`
-    : "No reference title was selected.";
+
+  const hasReference = Boolean(refMeta?.title);
+  const variationSeed = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const reference = hasReference
+    ? `PRIMARY TASTE SIGNAL — the user explicitly liked: ${refMeta.title}\nOverview: ${refMeta.overview || "Not available"}\nGenres: ${(refMeta.genres || []).join(", ") || "Not available"}`
+    : "No previous title was selected.";
+
+  const weighting = hasReference
+    ? `SIGNAL WEIGHTS:\n- Selected previous title: 75% (dominant signal)\n- Current mood/request: 20%\n- Content style: 5%\n\nTreat the selected title as the clearest evidence of the user's taste. Infer its tone, themes, pacing, character dynamics, world-building, humor, emotional texture, and audience appeal. At least 5 of the 8 recommendations in EACH category must strongly share two or more of those traits. Do not merely return generic items matching the mood. Do not recommend the selected title itself, direct sequels, remakes, or obvious same-franchise entries unless no reasonable alternative exists. Each reason must explicitly identify the specific trait shared with ${refMeta.title}.`
+    : `SIGNAL WEIGHTS:\n- Current mood/request: 80%\n- Content style: 20%`;
+
   const prompt = `You are MoodMatch, an expert cross-media recommendation engine.
-User mood or request: ${mood}
-Preference: ${criteria || "popular"}
+
 ${reference}
+Current mood or request: ${mood}
+Content style: ${criteria || "popular"}
+${weighting}
 
 Always recommend all three categories in one response: exactly 8 movies, 8 TV shows, and 8 books.
-Choose real works that can be found in TMDB or Google Books. Balance strong mood fit with variety. Avoid duplicate franchises and near-identical choices. Include international choices when appropriate. The reason must explain the mood match in one concise sentence. Score each item from 0 to 1 based on fit. Return only schema-valid JSON.`;
+Choose real works that can be found in TMDB or Google Books. Preserve cross-media relevance: a selected movie may strongly influence TV and book picks, and vice versa. Avoid duplicate franchises and near-identical choices. Include international choices when appropriate. Return a fresh set rather than repeating the most obvious defaults. Score each item from 0 to 1 based primarily on fit to the selected previous title when one exists. Return only schema-valid JSON.
+Variation seed: ${variationSeed}`;
+
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.85, responseMimeType: "application/json", responseSchema: recommendationSchema }
+      generationConfig: { temperature: 0.95, responseMimeType: "application/json", responseSchema: recommendationSchema }
     })
   });
+
   const payload = await response.json();
   if (!response.ok) throw new Error(payload?.error?.message || `Gemini request failed (${response.status})`);
   const raw = payload?.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("") || "[]";
@@ -101,6 +114,7 @@ async function enrichItem(item) {
       return item;
     }
   }
+
   try {
     if (!TMDB_KEY) return item;
     const cleanTitle = item.title.replace(/\(.*?\)/g, "").trim();
@@ -172,18 +186,23 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(200).end();
+
   const { query, mood, criteria = "popular", refId, refType } = req.query;
   try {
     if (query) return res.status(200).json(await searchCatalog(query));
     if (!mood) return res.status(400).json({ error: "Missing mood input" });
+
     const refMeta = refId && refType ? await fetchReferenceData(refId, refType) : null;
     const generated = await fetchGeminiPool(mood, criteria, refMeta);
     const enriched = await Promise.all(generated.map(enrichItem));
-    const spotify = await fetchSpotifyPlaylist(`${criteria} ${mood}`);
+    const spotifyQuery = refMeta?.title ? `${refMeta.title} ${mood}` : `${criteria} ${mood}`;
+    const spotify = await fetchSpotifyPlaylist(spotifyQuery);
+
     return res.status(200).json({
       planTitle: createPlanTitle(mood, criteria),
       mood,
       criteria,
+      referenceTitle: refMeta?.title || null,
       movies: finalize(enriched, "movie"),
       tv: finalize(enriched, "tv"),
       books: finalize(enriched, "book"),
