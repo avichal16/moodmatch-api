@@ -1,14 +1,22 @@
 const TMDB_KEY = process.env.TMDB_API_KEY;
 
-const ALLOWED_ORIGINS = new Set([
-  "https://mymoodmatch.com",
-  "https://www.mymoodmatch.com",
-  "https://moodmatch-frontend.vercel.app"
-]);
+function isAllowedOrigin(origin) {
+  if (!origin) return false;
+  if (origin === "https://mymoodmatch.com" || origin === "https://www.mymoodmatch.com") return true;
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return protocol === "https:" && (
+      hostname === "moodmatch-frontend.vercel.app" ||
+      (hostname.endsWith(".vercel.app") && hostname.includes("moodmatch-frontend"))
+    );
+  } catch {
+    return false;
+  }
+}
 
 function setCors(req, res) {
   const origin = req.headers.origin;
-  if (ALLOWED_ORIGINS.has(origin)) {
+  if (isAllowedOrigin(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
@@ -34,18 +42,19 @@ function uniqueMovies(items, excludeId) {
 
 export default async function handler(req, res) {
   setCors(req, res);
-  res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
   if (req.method === "OPTIONS") return res.status(204).end();
 
   try {
     const { query, id, random, personId, genreId } = req.query;
 
     if (query) {
+      res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
       const data = await tmdb(`/search/movie?query=${encodeURIComponent(query)}&include_adult=false`);
       return res.status(200).json(uniqueMovies(data.results).slice(0, 10));
     }
 
     if (random) {
+      res.setHeader("Cache-Control", "no-store");
       const page = Math.floor(Math.random() * 15) + 1;
       const data = await tmdb(`/movie/top_rated?page=${page}`);
       const pool = uniqueMovies(data.results);
@@ -53,6 +62,7 @@ export default async function handler(req, res) {
     }
 
     if (personId) {
+      res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
       const [person, credits] = await Promise.all([
         tmdb(`/person/${personId}`),
         tmdb(`/person/${personId}/movie_credits`)
@@ -62,6 +72,7 @@ export default async function handler(req, res) {
     }
 
     if (genreId) {
+      res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
       const [genres, movies] = await Promise.all([
         tmdb(`/genre/movie/list`),
         tmdb(`/discover/movie?with_genres=${encodeURIComponent(genreId)}&sort_by=vote_count.desc&include_adult=false`)
@@ -72,6 +83,7 @@ export default async function handler(req, res) {
 
     if (!id) return res.status(400).json({ error: "Provide query, id, random, personId, or genreId" });
 
+    res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
     const [details, credits, similar, recommendations, keywords] = await Promise.all([
       tmdb(`/movie/${id}`),
       tmdb(`/movie/${id}/credits`),
