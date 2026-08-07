@@ -84,7 +84,7 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
 
   try {
-    const { query, id, random, personId, genreId, keywordId, movement, country, decade, companyId } = req.query;
+    const { query, id, random, personId, genreId, keywordId, styleName, movement, country, decade, companyId } = req.query;
 
     if (query) {
       res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=3600");
@@ -119,6 +119,11 @@ export default async function handler(req, res) {
     if (keywordId) {
       const [keyword, movies] = await Promise.all([tmdb(`/keyword/${keywordId}`), tmdb(`/discover/movie?with_keywords=${encodeURIComponent(keywordId)}&sort_by=vote_count.desc&include_adult=false`)]);
       return res.status(200).json({ type: "style", style: keyword, movies: uniqueMovies(movies.results).slice(0, 20) });
+    }
+
+    if (styleName) {
+      const branch = await keywordBranch(styleName);
+      return res.status(200).json({ type: "style", style: branch.keyword, movies: branch.movies });
     }
 
     if (movement) {
